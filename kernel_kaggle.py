@@ -28,6 +28,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 import re
+import mlflow
+from mlflow.models import infer_signature
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 @contextmanager
@@ -283,7 +286,7 @@ def kfold_lightgbm(df, num_folds, stratified = False, debug= False):
             min_split_gain=0.0222415,
             min_child_weight=39.3259775,
             silent=-1,
-            verbose=-1, )
+            verbose=-1)
 
         # clf.fit(train_x, train_y, eval_set=[(train_x, train_y), (valid_x, valid_y)], 
         #     eval_metric= 'auc', verbose= 200, early_stopping_rounds= 200)
@@ -303,9 +306,10 @@ def kfold_lightgbm(df, num_folds, stratified = False, debug= False):
         fold_importance_df["importance"] = clf.feature_importances_
         fold_importance_df["fold"] = n_fold + 1
         feature_importance_df = pd.concat([feature_importance_df, fold_importance_df], axis=0)
-        print('Fold %2d AUC : %.6f' % (n_fold + 1, roc_auc_score(valid_y, oof_preds[valid_idx])))
-        del clf, train_x, train_y, valid_x, valid_y
-        gc.collect()
+        metric = roc_auc_score(valid_y, oof_preds[valid_idx])
+        print('Fold %2d AUC : %.6f' % (n_fold + 1, metric))
+#        del clf, train_x, train_y, valid_x, valid_y
+       # gc.collect()
 
     print('Full AUC score %.6f' % roc_auc_score(train_df['TARGET'], oof_preds))
     # Write submission file and plot feature importance
@@ -313,6 +317,45 @@ def kfold_lightgbm(df, num_folds, stratified = False, debug= False):
         test_df['TARGET'] = sub_preds
         test_df[['SK_ID_CURR', 'TARGET']].to_csv(submission_file_name, index= False)
     display_importances(feature_importance_df)
+    mlflow.set_tracking_uri(uri="http://127.0.0.1:8080")
+
+# Create a new MLflow Experiment
+    mlflow.set_experiment("MLflow Quickstart credit score")
+    with mlflow.start_run():
+        params = {
+            "nthread":6,
+            "n_estimators":10000,
+            "learning_rate":0.02,
+            "num_leaves":34,
+            "colsample_bytree":0.9497036,
+            "subsample":0.8715623,
+            "max_depth":8,
+            "reg_alpha":0.041545473,
+            "reg_lambda":0.0735294,
+            "min_split_gain":0.0222415,
+            "min_child_weight":39.3259775,
+            "silent":-1,
+            "verbose":-1
+        }
+        mlflow.log_params(params)
+
+    # Log the loss metric
+        mlflow.log_metric("accuracy", metric)
+
+    # Set a tag that we can use to remind ourselves what this run was for
+        mlflow.set_tag("Training Info", "Basic LGBM model for credit score data")
+
+    # Infer the model signature
+        signature = infer_signature(train_x, clf.predict(train_x))
+
+    # Log the model
+        model_info = mlflow.sklearn.log_model(
+            sk_model=clf,
+            artifact_path="credit_score_data",
+            signature=signature,
+            input_example=train_x,
+            registered_model_name="tracking-quickstart",
+        )
     return feature_importance_df
 
 # Display/plot feature importance
@@ -377,4 +420,7 @@ def main(debug = False):
 if __name__ == "__main__":
     submission_file_name = "submission_kernel02.csv"
     with timer("Full model run"):
-        main(debug=True)
+        main(debug=False)
+        # Set our tracking server uri for logging
+    
+    
